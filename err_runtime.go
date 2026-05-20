@@ -1,6 +1,7 @@
 package std
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 )
@@ -34,6 +35,13 @@ import (
 //	default: /* ... */
 //	}
 //
+// --
+//
+// For some cases it may be important to distinguish temporary runtime errors from permanent (e.g. for retry strategies).
+// ErrorRuntime has a special flag for this -- IsTemporary() / IsPermanent().
+//
+// --
+//
 // Usage example:
 //
 //	package example
@@ -41,7 +49,7 @@ import (
 //	func SomeFunc() error {
 //		v, err := ...
 //		if err != nil {
-//			return std.WrapErrorToRuntime(err, "example", "SomeFunc")
+//			return std.ErrToRuntime(err, "example", "SomeFunc")
 //		}
 //		...
 //	}
@@ -51,14 +59,13 @@ import (
 //	func (m *MyType) SomeMethod() (..., error) {
 //		...
 //		if err != nil {
-//			return std.WrapErrorToRuntime(err, m, "SomeMethod")
+//			return std.ErrToRuntime(err, m, "SomeMethod")
 //		}
 //		...
 //	}
-//
-// See WrapErrorToRuntime.
 type ErrorRuntime struct {
 	err error
+	tmp bool
 }
 
 // ---------------------------------------------------------------------------------------------------------------------
@@ -67,20 +74,55 @@ type ErrorRuntime struct {
 
 // NewErrorRuntimeFf
 //
-// Panics in case of empty arguments:
-//   - msg
+// DEPRECATED: use NewErrorRuntimePermanentFf() or NewErrorRuntimeTemporaryFf() instead.
 func NewErrorRuntimeFf(msg string, msgArgs ...any) ErrorRuntime {
+	return NewErrorRuntimePermanentFf(msg, msgArgs...)
+}
+
+// NewErrorRuntimePermanentFf
+//
+// See ErrorRuntime for details.
+func NewErrorRuntimePermanentFf(msg string, msgArgs ...any) ErrorRuntime {
+	return newErrorRuntimeFf(false, msg, msgArgs...)
+}
+
+// NewErrorRuntimeTemporaryFf
+//
+// See ErrorRuntime for details.
+func NewErrorRuntimeTemporaryFf(msg string, msgArgs ...any) ErrorRuntime {
+	return newErrorRuntimeFf(true, msg, msgArgs...)
+}
+
+func newErrorRuntimeFf(isTmp bool, msg string, msgArgs ...any) ErrorRuntime {
 	if msg == "" {
 		panic("`msg` must not be empty")
 	}
 
-	return ErrorRuntime{err: fmt.Errorf(msg, msgArgs...)}
+	return ErrorRuntime{
+		err: fmt.Errorf(msg, msgArgs...),
+		tmp: isTmp,
+	}
 }
+
+// --
 
 // WrapErrorToRuntime
 //
+// DEPRECATED: use ErrToRuntime() instead.
+func WrapErrorToRuntime(err error, methodOwner any, methodName string, methodInfo ...string) ErrorRuntime {
+	return ErrToRuntime(err, methodOwner, methodName, methodInfo...)
+}
+
+// ErrToRuntime
+//
+// Wraps provided error into ErrorRuntime.
+//
 // Adds this kind of prefix to the error to imitate stack trace:
 // "{{`methodOwner`}}.{{`methodName`}}/{{joined by "/" elements of the `methodInfo`}}".
+//
+// If `err` is a temporary ErrorRuntime (wrapped or not -- errors.As() is used as a checker),
+// result error also will be marked as temporary, otherwise -- permanent.
+// To mark result error by force use ErrToRuntimePermanent() or ErrToRuntimeTemporary().
 //
 // Panics in case of empty arguments:
 //   - err
@@ -93,7 +135,32 @@ func NewErrorRuntimeFf(msg string, msgArgs ...any) ErrorRuntime {
 //     String value is allowed, for example, to accept package names, when a regular function is called, not a method.
 //   - `methodName` -- name of the method / function, that was called.
 //   - `methodInfo` -- any additional info.
-func WrapErrorToRuntime(err error, methodOwner any, methodName string, methodInfo ...string) ErrorRuntime {
+func ErrToRuntime(err error, methodOwner any, methodName string, methodInfo ...string) ErrorRuntime {
+	isTmp := false
+
+	var vErr ErrorRuntime
+	if errors.As(err, &vErr) {
+		isTmp = vErr.tmp
+	}
+
+	return errorToRuntime(isTmp, err, methodOwner, methodName, methodInfo...)
+}
+
+// ErrToRuntimePermanent
+//
+// Same as ErrToRuntime, but marks result error as permanent, even if source error was temporary.
+func ErrToRuntimePermanent(err error, methodOwner any, methodName string, methodInfo ...string) ErrorRuntime {
+	return errorToRuntime(false, err, methodOwner, methodName, methodInfo...)
+}
+
+// ErrToRuntimeTemporary
+//
+// Same as ErrToRuntime, but marks result error as temporary, even if source error was permanent.
+func ErrToRuntimeTemporary(err error, methodOwner any, methodName string, methodInfo ...string) ErrorRuntime {
+	return errorToRuntime(true, err, methodOwner, methodName, methodInfo...)
+}
+
+func errorToRuntime(isTmp bool, err error, methodOwner any, methodName string, methodInfo ...string) ErrorRuntime {
 	if err == nil {
 		panic("`err` must not be nil")
 	}
@@ -122,12 +189,31 @@ func WrapErrorToRuntime(err error, methodOwner any, methodName string, methodInf
 
 	return ErrorRuntime{
 		err: fmt.Errorf("%s: %w", messagePrefix, err),
+		tmp: isTmp,
 	}
 }
 
 // ---------------------------------------------------------------------------------------------------------------------
 // State
 // ---------------------------------------------------------------------------------------------------------------------
+
+// IsPermanent
+//
+// Same as "not IsTemporary()".
+//
+// See NewErrorRuntimePermanentFf().
+// See ErrToRuntimePermanent().
+func (e ErrorRuntime) IsPermanent() bool {
+	return !e.tmp
+}
+
+// IsTemporary
+//
+// See NewErrorRuntimeTemporaryFf().
+// See ErrToRuntimeTemporary().
+func (e ErrorRuntime) IsTemporary() bool {
+	return e.tmp
+}
 
 func (e ErrorRuntime) Error() string {
 	return e.err.Error()
