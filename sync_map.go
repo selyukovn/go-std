@@ -62,6 +62,19 @@ func (m *SyncMap[K, V]) Delete(k K) {
 	delete(m.m, k)
 }
 
+// DeleteIf
+//
+// Removes association with the key `k`, if `fn` returns `true`.
+// Does not call `fn`, if key `k` does not exist.
+func (m *SyncMap[K, V]) DeleteIf(k K, fn func(v V) bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if _, exists := m.m[k]; exists && fn(m.m[k]) {
+		delete(m.m, k)
+	}
+}
+
 // DeleteAndGet
 //
 // Removes association with the key `k` and then returns associated value like the Get() method does.

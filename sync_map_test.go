@@ -178,6 +178,62 @@ func Test_SyncMap_Delete(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------------------------------------------------
+// Delete If
+// ---------------------------------------------------------------------------------------------------------------------
+
+func Test_SyncMap_DeleteIf(t *testing.T) {
+	t.Run("delete existing key", func(t *testing.T) {
+		m := NewSyncMap[string, int]()
+		m.Set("toDelete", 1)
+		m.Set("toNotDelete", 0)
+
+		m.DeleteIf("toDelete", func(v int) bool { return true })
+		m.DeleteIf("toNotDelete", func(v int) bool { return false })
+
+		assert.Equal(t, 1, m.Len())
+		_, exists := m.Get("toDelete")
+		assert.False(t, exists)
+		_, exists = m.Get("toNotDelete")
+		assert.True(t, exists)
+	})
+
+	t.Run("delete non‑existing key (no panic, no fn-call)", func(t *testing.T) {
+		m := NewSyncMap[string, int]()
+
+		fnCalled := false
+		assert.NotPanics(t, func() {
+			m.DeleteIf("nonexistent", func(v int) bool { fnCalled = true; return false })
+			m.DeleteIf("nonexistent", func(v int) bool { fnCalled = true; return true })
+		})
+		assert.Equal(t, 0, m.Len())
+		assert.False(t, fnCalled)
+	})
+
+	t.Run("thread safe", func(t *testing.T) {
+		const elems = 10_000
+		const goroutines = 10
+		m := NewSyncMap[int, string]()
+		for i := 0; i < elems; i++ {
+			m.Set(i, "value")
+		}
+
+		var wg sync.WaitGroup
+		wg.Add(goroutines)
+		for g := 0; g < goroutines; g++ {
+			go func(g int) {
+				defer wg.Done()
+				for i := g; i < elems; i += goroutines {
+					m.DeleteIf(i, func(v string) bool { return true })
+				}
+			}(g)
+		}
+		wg.Wait()
+
+		assert.Equal(t, 0, m.Len())
+	})
+}
+
+// ---------------------------------------------------------------------------------------------------------------------
 // Delete and Get
 // ---------------------------------------------------------------------------------------------------------------------
 
